@@ -1,0 +1,53 @@
+import boto3
+import csv
+from io import StringIO
+from datetime import datetime
+
+s3 = boto3.client('s3')
+
+def lambda_handler(event, context):
+    bucket_name = event['Records'][0]['s3']['bucket']['name']
+    input_key = event['Records'][0]['s3']['object']['key']
+
+    # Skip already processed files
+    if input_key.startswith('processed/'):
+        return {'statusCode': 200, 'body': 'Already processed'}
+
+    try:
+        # Read CSV from S3
+        response = s3.get_object(Bucket=bucket_name, Key=input_key)
+        content = response['Body'].read().decode('utf-8')
+
+        reader = csv.DictReader(StringIO(content))
+
+        # Prepare output
+        output_buffer = StringIO()
+        fieldnames = reader.fieldnames + ['processed_timestamp']
+        writer = csv.DictWriter(output_buffer, fieldnames=fieldnames)
+
+        writer.writeheader()
+
+        for row in reader:
+            row['processed_timestamp'] = datetime.utcnow().isoformat()
+            writer.writerow(row)
+
+        # Output path
+        output_key = f"processed/{input_key.split('/')[-1]}"
+
+        # Upload to S3
+        s3.put_object(
+            Bucket=bucket_name,
+            Key=output_key,
+            Body=output_buffer.getvalue()
+        )
+
+        return {
+            'statusCode': 200,
+            'body': f'File processed: {output_key}'
+        }
+
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'body': str(e)
+        }
